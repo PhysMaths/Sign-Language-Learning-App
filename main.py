@@ -47,7 +47,8 @@ class HomeWindow(QMainWindow):
     def start_session(self):
         self.webcam_window = WebcamWindow()
         self.webcam_window.resize(800, 600)
-        self.webcam_window.show()
+        if not self.webcam_window.closed:
+            self.webcam_window.show()
         self.close()
 
 
@@ -55,6 +56,8 @@ class WebcamWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Webcam Preview")
+
+        self.closed = False
 
         self.letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
         self.index = 0
@@ -84,7 +87,8 @@ class WebcamWindow(QMainWindow):
             self.index += 1
             if self.index >= len(self.progress):
                 self.go_home()
-                return 
+                self.closed = True
+                return
         
         self.question = QLabel(self.letters[self.index])
         self.question.setAlignment(Qt.AlignCenter)
@@ -204,6 +208,7 @@ class WebcamWindow(QMainWindow):
             message.exec_()
     
     def go_home(self):
+        QMessageBox.information(self, "All done", "All cards for today are finished.")
         self.home = HomeWindow()
         self.home.resize(800, 600)
         self.home.show()
