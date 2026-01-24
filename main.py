@@ -50,7 +50,12 @@ class WebcamWindow(QMainWindow):
             except (json.JSONDecodeError, OSError):
                 pass
         
-
+        # get the first valid letter
+        while not self.is_valid(self.index):
+            self.index += 1
+            if self.index >= 26:
+                break
+        
         self.question = QLabel(self.letters[self.index])
         self.question.setAlignment(Qt.AlignCenter)
         self.question.setFont(QFont("Arial", 24))
@@ -134,11 +139,21 @@ class WebcamWindow(QMainWindow):
         d += timedelta(days=interval)
         self.progress[self.letters[self.index]]["next_due"] = d.isoformat()
 
-        self.index += 1
+        while not self.is_valid(self.index):
+            self.index += 1
+            if self.index >= 26:
+                break
+        
+        # change this when we get around to making a homescreen
         self.index %= 26
+
         self.question.setText(self.letters[self.index])
         self.result_label.setText("")
                 
+    def is_valid(self, index):
+        if self.progress[self.letters[index]]["next_due"] == date.today().isoformat():
+            return True
+        return False
 
     def closeEvent(self, event):
         with open(self.path, "w", encoding="utf-8") as f:
