@@ -1,6 +1,8 @@
 import sys
 import os
 import cv2
+from datetime import date, timedelta
+import json
 from inference_sdk import InferenceConfiguration, InferenceHTTPClient
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QImage, QPixmap
@@ -28,6 +30,27 @@ class WebcamWindow(QMainWindow):
         self.letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
         self.index = 0
 
+        self.progress = {}
+        self.path = "progress.json"
+
+        if not os.path.exists(self.path):
+            today = date.today().isoformat()
+
+            self.progress = {
+                letter: {"interval": 1, "next_due": today, "streak": 0}
+                for letter in self.letters
+            }
+
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(self.progress, f, indent=2)
+        else:
+            try:
+                with open(self.path, "r", encoding="utf-8") as f:
+                    self.progress =  json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        
+
         self.question = QLabel(self.letters[self.index])
         self.question.setAlignment(Qt.AlignCenter)
         self.question.setFont(QFont("Arial", 24))
@@ -43,16 +66,11 @@ class WebcamWindow(QMainWindow):
         self.result_label.setAlignment(Qt.AlignCenter)
         self.result_label.setFont(QFont("Arial", 24))
 
-        self.next_button = QPushButton("Next")
-        self.next_button.setVisible(False)
-        self.next_button.clicked.connect(self.next_action)
-
         layout = QVBoxLayout()
         layout.addWidget(self.question)
         layout.addWidget(self.label, stretch=1)
         layout.addWidget(self.capture_button)
         layout.addWidget(self.result_label)
-        layout.addWidget(self.next_button)
 
         container = QWidget()
         container.setLayout(layout)
@@ -104,17 +122,28 @@ class WebcamWindow(QMainWindow):
         
         if sign_prediction == self.letters[self.index]:
             self.result_label.setText("Correct!")
-            self.next_button.setVisible(True)
+            self.progress[self.letters[self.index]]["interval"] = min(self.progress[self.letters[self.index]]["interval"] * 2, 30)
         else:
-            self.result_label.setText("Wrong, please try again")
-            # Set this back to false
-            self.next_button.setVisible(True)
+            self.result_label.setText("Wrong")
+            self.progress[self.letters[self.index]]["interval"] = 1
             self.show_wrong_popup()
         
-        # self.result_label.setText(f"Sign: {sign_prediction}")
-        
+        interval = self.progress[self.letters[self.index]]["interval"]
+        next_due = self.progress[self.letters[self.index]]["next_due"]
+        d = date.fromisoformat(next_due)
+        d += timedelta(days=interval)
+        self.progress[self.letters[self.index]]["next_due"] = d.isoformat()
+
+        self.index += 1
+        self.index %= 26
+        self.question.setText(self.letters[self.index])
+        self.result_label.setText("")
+                
 
     def closeEvent(self, event):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(self.progress, f, indent=2)
+
         if hasattr(self, "cap") and self.cap is not None:
             self.cap.release()
         super().closeEvent(event)
@@ -131,17 +160,8 @@ class WebcamWindow(QMainWindow):
                 )
             message.exec_()
     
-    def next_action(self):
-        self.index += 1
-        self.index %= 26
-        self.question.setText(self.letters[self.index])
-        self.next_button.setVisible(False)
-        self.result_label.setText("")
-
-
-
-
 def main():
+
     app = QApplication(sys.argv)
     window = WebcamWindow()
     window.resize(800, 600)
