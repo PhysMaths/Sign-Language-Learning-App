@@ -21,6 +21,35 @@ from PyQt5.QtWidgets import (
     QPushButton
 )
 
+class HomeWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Home")
+
+        title = QLabel("Sign Language Practise")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFont(QFont("Arial", 24))
+
+        self.start_button = QPushButton("Start")
+        self.start_button.clicked.connect(self.start_session)
+
+        layout = QVBoxLayout()
+        layout.addWidget(title)
+        layout.addWidget(self.start_button)
+
+        container = QWidget()
+        container.setLayout(layout)
+        self.setCentralWidget(container)
+
+        self.webcam_window = None
+
+    
+    def start_session(self):
+        self.webcam_window = WebcamWindow()
+        self.webcam_window.resize(800, 600)
+        self.webcam_window.show()
+        self.close()
+
 
 class WebcamWindow(QMainWindow):
     def __init__(self):
@@ -53,8 +82,9 @@ class WebcamWindow(QMainWindow):
         # get the first valid letter
         while not self.is_valid(self.index):
             self.index += 1
-            if self.index >= 26:
-                break
+            if self.index >= len(self.progress):
+                self.go_home()
+                return 
         
         self.question = QLabel(self.letters[self.index])
         self.question.setAlignment(Qt.AlignCenter)
@@ -141,11 +171,9 @@ class WebcamWindow(QMainWindow):
 
         while not self.is_valid(self.index):
             self.index += 1
-            if self.index >= 26:
-                break
-        
-        # change this when we get around to making a homescreen
-        self.index %= 26
+            if self.index >= len(self.progress):
+                self.go_home()  
+                return      
 
         self.question.setText(self.letters[self.index])
         self.result_label.setText("")
@@ -175,10 +203,16 @@ class WebcamWindow(QMainWindow):
                 )
             message.exec_()
     
+    def go_home(self):
+        self.home = HomeWindow()
+        self.home.resize(800, 600)
+        self.home.show()
+        self.close()
+    
 def main():
 
     app = QApplication(sys.argv)
-    window = WebcamWindow()
+    window = HomeWindow()
     window.resize(800, 600)
     window.show()
     sys.exit(app.exec())
