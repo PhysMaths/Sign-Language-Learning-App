@@ -168,11 +168,30 @@ class WebcamWindow(QMainWindow):
                 
             prediction = model.predict([np.asarray(data_aux)])
 
-            predicted_character = labels_dict[int(prediction[0])]
+            sign_prediction = labels_dict[int(prediction[0])]
+
+            if sign_prediction == self.numbers[self.index]:
+                self.result_label.setText("Correct!")
+                self.progress[self.numbers[self.index]]["interval"] = min(self.progress[self.numbers[self.index]]["interval"] * 2, 30)
+                interval = self.progress[self.numbers[self.index]]["interval"]
+                next_due = self.progress[self.numbers[self.index]]["next_due"]
+                d = date.fromisoformat(next_due)
+                d += timedelta(days=interval)
+                self.progress[self.numbers[self.index]]["next_due"] = d.isoformat()
+
+                while not self.is_valid(self.index):
+                    self.index += 1
+                    if self.index >= len(self.progress):
+                        self.go_home()  
+                        return      
+
+                self.question.setText(self.numbers[self.index])
+
+            
 
             # Display prediction on frame
             cv2.putText(frame,
-                        f'Prediction: {predicted_character}',
+                        f'Prediction: {sign_prediction}',
                         (50, 50),                      # Position (x, y)
                         cv2.FONT_HERSHEY_SIMPLEX,      # Font
                         1.5,                           # Font scale
