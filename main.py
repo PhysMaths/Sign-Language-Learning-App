@@ -24,6 +24,17 @@ from PyQt5.QtWidgets import (
     QPushButton
 )
 
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+
+hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
+
+model_dict = pickle.load(open('./1to10.p', 'rb'))
+model = model_dict['model']
+
+labels_dict = {0: '1', 1: '2', 2: '3', 3: '4', 4: '5', 5: '6', 6: '7', 7: '8', 8: '9', 9: '10'}
+
 class HomeWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -134,7 +145,41 @@ class WebcamWindow(QMainWindow):
             return
 
         self.latest_frame = frame
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)      
+
+        data_aux = []
+            
+        results = hands.process(frame)
+        if results.multi_hand_landmarks and len(results.multi_hand_landmarks) == 1:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(
+                    frame,  # image to draw
+                    hand_landmarks,  # model output
+                    mp_hands.HAND_CONNECTIONS,  # hand connections
+                    mp_drawing_styles.get_default_hand_landmarks_style(),
+                    mp_drawing_styles.get_default_hand_connections_style())
+                
+                for i in range(len(hand_landmarks.landmark)):
+                        x = hand_landmarks.landmark[i].x
+                        y = hand_landmarks.landmark[i].y
+                        data_aux.append(x)
+                        data_aux.append(y)
+                
+                
+            prediction = model.predict([np.asarray(data_aux)])
+
+            predicted_character = labels_dict[int(prediction[0])]
+
+            # Display prediction on frame
+            cv2.putText(frame,
+                        f'Prediction: {predicted_character}',
+                        (50, 50),                      # Position (x, y)
+                        cv2.FONT_HERSHEY_SIMPLEX,      # Font
+                        1.5,                           # Font scale
+                        (0, 255, 0),                   # Color (BGR)
+                        3,                             # Thickness
+                        cv2.LINE_AA)
+
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
@@ -145,15 +190,6 @@ class WebcamWindow(QMainWindow):
             return
         
         self.result_label.setText("")
-        
-        mp_hands = mp.solutions.hands
-        mp_drawing = mp.solutions.drawing_utils
-        mp_drawing_styles = mp.solutions.drawing_styles
-
-        hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
-
-        model_dict = pickle.load(open('./1to10.p', 'rb'))
-        model = model_dict['model']
         
         data_aux = []
 
@@ -182,8 +218,6 @@ class WebcamWindow(QMainWindow):
         labels_dict = {0: '1', 1: '2', 2: '3', 3: '4', 4: '5', 5: '6', 6: '7', 7: '8', 8: '9', 9: '10'}
 
         sign_prediction = str(labels_dict[int(prediction[0])])
-
-        print(sign_prediction)
         
         if sign_prediction == self.numbers[self.index]:
             self.result_label.setText("Correct!")
