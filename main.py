@@ -8,6 +8,9 @@ from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
+import mediapipe as mp
+import pickle
+import numpy as np
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -59,7 +62,7 @@ class WebcamWindow(QMainWindow):
 
         self.closed = False
 
-        self.letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        self.numbers = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
         self.index = 0
 
         self.progress = {}
@@ -69,8 +72,8 @@ class WebcamWindow(QMainWindow):
             today = date.today().isoformat()
 
             self.progress = {
-                letter: {"interval": 1, "next_due": today, "streak": 0}
-                for letter in self.letters
+                number : {"interval": 1, "next_due": today, "streak": 0}
+                for number in self.numbers
             }
 
             with open(self.path, "w", encoding="utf-8") as f:
@@ -90,7 +93,7 @@ class WebcamWindow(QMainWindow):
                 self.closed = True
                 return
         
-        self.question = QLabel(self.letters[self.index])
+        self.question = QLabel(self.numbers[self.index])
         self.question.setAlignment(Qt.AlignCenter)
         self.question.setFont(QFont("Arial", 24))
 
@@ -141,37 +144,61 @@ class WebcamWindow(QMainWindow):
         if self.latest_frame is None:
             return
         
-        MODEL_ID = "sign-language-dn6dl/2"
-
-        config = InferenceConfiguration(confidence_threshold=0.5, iou_threshold=0.5)
-
-        client = InferenceHTTPClient(
-            api_url="http://localhost:9001",
-            api_key="4O4prTCPkawUqMfWnLI5",
-        )
-        client.configure(config)
-        client.select_model(MODEL_ID)
-
-        predictions = client.infer(self.latest_frame)
-        prediction_items = predictions.get("predictions", [])
-        if len(prediction_items) > 0:
-            sign_prediction = prediction_items[0].get("class", 'No sign detected')
-        else:
-            sign_prediction = "No sign detected"
+        self.result_label.setText("")
         
-        if sign_prediction == self.letters[self.index]:
+        mp_hands = mp.solutions.hands
+        mp_drawing = mp.solutions.drawing_utils
+        mp_drawing_styles = mp.solutions.drawing_styles
+
+        hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
+
+        model_dict = pickle.load(open('./1to10.p', 'rb'))
+        model = model_dict['model']
+        
+        data_aux = []
+
+        frame = self.latest_frame
+
+        frame_rgb = cv2.cvtColor(frame,  cv2.COLOR_BGR2RGB)
+         
+        results = hands.process(frame_rgb)
+        if results.multi_hand_landmarks and len(results.multi_hand_landmarks) == 1:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(
+                    frame,  # image to draw
+                    hand_landmarks,  # model output
+                    mp_hands.HAND_CONNECTIONS,  # hand connections
+                    mp_drawing_styles.get_default_hand_landmarks_style(),
+                    mp_drawing_styles.get_default_hand_connections_style())
+                
+                for i in range(len(hand_landmarks.landmark)):
+                        x = hand_landmarks.landmark[i].x
+                        y = hand_landmarks.landmark[i].y
+                        data_aux.append(x)
+                        data_aux.append(y)
+
+        prediction = model.predict([np.asarray(data_aux)])
+
+        labels_dict = {0: '1', 1: '2', 2: '3', 3: '4', 4: '5', 5: '6', 6: '7', 7: '8', 8: '9', 9: '10'}
+
+        sign_prediction = str(labels_dict[int(prediction[0])])
+
+        print(sign_prediction)
+        
+        if sign_prediction == self.numbers[self.index]:
             self.result_label.setText("Correct!")
-            self.progress[self.letters[self.index]]["interval"] = min(self.progress[self.letters[self.index]]["interval"] * 2, 30)
+            self.progress[self.numbers[self.index]]["interval"] = min(self.progress[self.numbers[self.index]]["interval"] * 2, 30)
         else:
+            print("got here to the wrong part")
             self.result_label.setText("Wrong")
-            self.progress[self.letters[self.index]]["interval"] = 1
-            self.show_wrong_popup()
+            self.progress[self.numbers[self.index]]["interval"] = 1
+            # self.show_wrong_popup()
         
-        interval = self.progress[self.letters[self.index]]["interval"]
-        next_due = self.progress[self.letters[self.index]]["next_due"]
+        interval = self.progress[self.numbers[self.index]]["interval"]
+        next_due = self.progress[self.numbers[self.index]]["next_due"]
         d = date.fromisoformat(next_due)
         d += timedelta(days=interval)
-        self.progress[self.letters[self.index]]["next_due"] = d.isoformat()
+        self.progress[self.numbers[self.index]]["next_due"] = d.isoformat()
 
         while not self.is_valid(self.index):
             self.index += 1
@@ -179,11 +206,10 @@ class WebcamWindow(QMainWindow):
                 self.go_home()  
                 return      
 
-        self.question.setText(self.letters[self.index])
-        self.result_label.setText("")
+        self.question.setText(self.numbers[self.index])
                 
     def is_valid(self, index):
-        if self.progress[self.letters[index]]["next_due"] == date.today().isoformat():
+        if self.progress[self.numbers[index]]["next_due"] == date.today().isoformat():
             return True
         return False
 
