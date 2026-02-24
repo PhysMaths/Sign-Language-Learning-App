@@ -1,9 +1,8 @@
 import sys
 import os
 import cv2
-from datetime import date, timedelta, datetime
+from datetime import timedelta, datetime
 import json
-from inference_sdk import InferenceConfiguration, InferenceHTTPClient
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
@@ -11,6 +10,7 @@ from PyQt5.QtGui import QFont
 import mediapipe as mp
 import pickle
 import numpy as np
+import random
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -79,8 +79,10 @@ class WebcamWindow(QMainWindow):
         self.progress = {}
         self.path = "progress.json"
 
+        self.due_queue = []
+
         # makes a new progress dictionary every time change for the final implementation
-        if not os.path.exists(self.path) or os.path.exists(self.path):
+        if not os.path.exists(self.path):
             now = datetime.now().isoformat()
 
             self.progress = {
@@ -103,16 +105,13 @@ class WebcamWindow(QMainWindow):
                     self.progress =  json.load(f)
             except (json.JSONDecodeError, OSError):
                 pass
+
+        self.current_number = self.next_number()
+        if self.current_number is None:
+            return
         
-        # get the first valid letter
-        while not self.is_valid(self.index):
-            self.index += 1
-            if self.index >= len(self.progress):
-                self.go_home()
-                self.closed = True
-                return
         
-        self.question = QLabel(self.numbers[self.index])
+        self.question = QLabel(self.current_number)
         self.question.setAlignment(Qt.AlignCenter)
         self.question.setFont(QFont("Arial", 24))
 
@@ -140,9 +139,26 @@ class WebcamWindow(QMainWindow):
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(30)
         self.latest_frame = None
+    
+    def build_due_queue(self):
+        now = datetime.now()
+        due = [n for n in self.numbers if datetime.fromisoformat(self.progress[n]["due"]) <= now]
+        random.shuffle(due)
+        self.due_queue = due
+    
+    def next_number(self):
+        if not self.due_queue:
+            self.build_due_queue()
+            if not self.due_queue:
+                self.go_home()
+                self.closed = True 
+                return None
+        n = self.due_queue.pop()
+        return n
+
 
     def see_answer(self):
-        img_path = "pictures/" + self.numbers[self.index] + ".png"
+        img_path = "pictures/" + self.current_number + ".png"
         if os.path.exists(img_path):
             pixmap = QPixmap(img_path)
             message = QMessageBox(self)
@@ -155,13 +171,9 @@ class WebcamWindow(QMainWindow):
 
             self.sm2_update(1)
 
-            while not self.is_valid(self.index):
-                self.index += 1
-                if self.index >= len(self.progress):
-                    self.go_home()  
-                    return   
+            self.current_number = self.next_number()
 
-            self.question.setText(self.numbers[self.index])
+            self.question.setText(self.current_number)
 
         return
 
@@ -196,29 +208,14 @@ class WebcamWindow(QMainWindow):
 
             sign_prediction = labels_dict[int(prediction[0])]
 
-            if sign_prediction == self.numbers[self.index]:
+            if sign_prediction == self.current_number:
                 quality = self.choose_difficulty()
 
                 self.sm2_update(quality)
 
-                while not self.is_valid(self.index):
-                    self.index += 1
-                    if self.index >= len(self.progress):
-                        self.go_home()  
-                        return      
+                self.current_number = self.next_number()   
 
-                self.question.setText(self.numbers[self.index])
-
-            
-            # Display prediction on frame
-            cv2.putText(frame,
-                        f'Prediction: {sign_prediction}',
-                        (50, 50),                      # Position (x, y)
-                        cv2.FONT_HERSHEY_SIMPLEX,      # Font
-                        1.5,                           # Font scale
-                        (0, 255, 0),                   # Color (BGR)
-                        3,                             # Thickness
-                        cv2.LINE_AA)
+                self.question.setText(self.current_number)
 
         h, w, ch = frame.shape
         bytes_per_line = ch * w
@@ -229,14 +226,14 @@ class WebcamWindow(QMainWindow):
     from datetime import datetime, timedelta
 
     def sm2_update(self, quality):
-        ef = self.progress[self.numbers[self.index]]["ease_factor"]
-        reps = self.progress[self.numbers[self.index]]["repetitions"]
-        interval = self.progress[self.numbers[self.index]]["interval"]
+        ef = self.progress[self.current_number]["ease_factor"]
+        reps = self.progress[self.current_number]["repetitions"]
+        interval = self.progress[self.current_number]["interval"]
 
         if quality < 3:
             reps = 0
             interval = 1
-            self.progress[self.numbers[self.index]]["lapses"] += 1
+            self.progress[self.current_number]["lapses"] += 1
         else:
             reps += 1
 
@@ -250,10 +247,10 @@ class WebcamWindow(QMainWindow):
         ef = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
         ef = max(1.3, ef)
 
-        self.progress[self.numbers[self.index]]["ease_factor"] = ef
-        self.progress[self.numbers[self.index]]["repetitions"] = reps
-        self.progress[self.numbers[self.index]]["interval"] = interval
-        self.progress[self.numbers[self.index]]["due"] = (datetime.now() + timedelta(days=interval)).isoformat()
+        self.progress[self.current_number]["ease_factor"] = ef
+        self.progress[self.current_number]["repetitions"] = reps
+        self.progress[self.current_number]["interval"] = interval
+        self.progress[self.current_number]["due"] = (datetime.now() + timedelta(days=interval)).isoformat()
 
     def choose_difficulty(self):
         msg = QMessageBox()
@@ -284,11 +281,6 @@ class WebcamWindow(QMainWindow):
 
         return 1
 
-                
-    def is_valid(self, index):
-        if datetime.fromisoformat(self.progress[self.numbers[index]]["due"]) <= datetime.now():
-            return True
-        return False
 
     def closeEvent(self, event):
         with open(self.path, "w", encoding="utf-8") as f:
@@ -297,18 +289,6 @@ class WebcamWindow(QMainWindow):
         if hasattr(self, "cap") and self.cap is not None:
             self.cap.release()
         super().closeEvent(event)
-
-    def show_wrong_popup(self):
-        img_path = "images/" + self.letters[self.index] + ".png"
-        if os.path.exists(img_path):
-            pixmap = QPixmap(img_path)
-            message = QMessageBox(self)
-            message.setText("")
-            if not pixmap.isNull():
-                message.setIconPixmap(
-                    pixmap.scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
-            message.exec_()
     
     def go_home(self):
         QMessageBox.information(self, "All done", "All cards for today are finished.")
