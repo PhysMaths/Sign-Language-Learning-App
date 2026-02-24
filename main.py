@@ -11,6 +11,8 @@ import mediapipe as mp
 import pickle
 import numpy as np
 import random
+from collections import Counter, defaultdict
+
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -47,9 +49,13 @@ class HomeWindow(QMainWindow):
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.start_session)
 
+        self.analytics_button = QPushButton("See Analytics")
+        self.analytics_button.clicked.connect(self.show_analytics)
+
         layout = QVBoxLayout()
         layout.addWidget(title)
         layout.addWidget(self.start_button)
+        layout.addWidget(self.analytics_button)
 
         container = QWidget()
         container.setLayout(layout)
@@ -65,12 +71,52 @@ class HomeWindow(QMainWindow):
             self.webcam_window.show()
         self.close()
 
+    def compute_analytics(self, path="reviews.jsonl"):
+        total = 0
+        correct = 0
+        quality_counts = Counter()
+        reviews_per_day = defaultdict(int)
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    ev = json.loads(line)
+                    total += 1
+                    if ev.get("correct"):
+                        correct += 1
+                    q = int(ev.get("quality", 0))
+                    quality_counts[q] += 1
+                    day = ev["ts"][:10]  # YYYY-MM-DD
+                    reviews_per_day[day] += 1
+        except FileNotFoundError:
+            pass
+
+        accuracy = (correct / total * 100) if total else 0.0
+
+        return {
+            "total_reviews": total,
+            "accuracy_pct": round(accuracy, 1),
+            "quality_counts": dict(quality_counts),
+            "reviews_per_day": dict(sorted(reviews_per_day.items())),
+        }
+
+    def show_analytics(self):
+        a = self.compute_analytics()
+        text = (
+            f"Total reviews: {a['total_reviews']}\n"
+            f"Accuracy: {a['accuracy_pct']}%\n\n"
+            f"Quality counts: {a['quality_counts']}\n"
+        )
+        QMessageBox.information(self, "Analytics", text)
+
 
 class WebcamWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Webcam Preview")
-        
+
         self.closed = False
 
         self.numbers = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
@@ -224,23 +270,44 @@ class WebcamWindow(QMainWindow):
         self.label.setPixmap(QPixmap.fromImage(image))
 
     
+    def log_review(self, number, quality, before, after, correct=True):
+        event = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "card_id": number,
+            "quality": quality,
+            "correct": correct,
+            "before": before,
+            "after": after,
+        }
+        with open("reviews.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(event) + "\n")
+
+    
     def save_progress(self):
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(self.progress, f, indent=2)
 
-
     def sm2_update(self, quality):
-        ef = self.progress[self.current_number]["ease_factor"]
-        reps = self.progress[self.current_number]["repetitions"]
-        interval = self.progress[self.current_number]["interval"]
+        key = self.current_number
+
+        before = {
+            "repetitions": self.progress[key]["repetitions"],
+            "interval": self.progress[key]["interval"],
+            "ease_factor": self.progress[key]["ease_factor"],
+            "due": self.progress[key]["due"],
+            "lapses": self.progress[key]["lapses"],
+        }
+
+        ef = before["ease_factor"]
+        reps = before["repetitions"]
+        interval = before["interval"]
 
         if quality < 3:
             reps = 0
             interval = 1
-            self.progress[self.current_number]["lapses"] += 1
+            self.progress[key]["lapses"] += 1
         else:
             reps += 1
-
             if reps == 1:
                 interval = 1
             elif reps == 2:
@@ -251,12 +318,23 @@ class WebcamWindow(QMainWindow):
         ef = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
         ef = max(1.3, ef)
 
-        self.progress[self.current_number]["ease_factor"] = ef
-        self.progress[self.current_number]["repetitions"] = reps
-        self.progress[self.current_number]["interval"] = interval
-        self.progress[self.current_number]["due"] = (datetime.now() + timedelta(days=interval)).isoformat()
+        self.progress[key]["ease_factor"] = ef
+        self.progress[key]["repetitions"] = reps
+        self.progress[key]["interval"] = interval
+        self.progress[key]["due"] = (datetime.now() + timedelta(days=interval)).isoformat()
+
+        after = {
+            "repetitions": reps,
+            "interval": interval,
+            "ease_factor": ef,
+            "due": self.progress[key]["due"],
+            "lapses": self.progress[key]["lapses"],
+        }
+
+        self.log_review(key, quality, before, after, correct=(quality >= 3))
 
         self.save_progress()
+
 
     def choose_difficulty(self):
         msg = QMessageBox(self)
@@ -299,6 +377,7 @@ class WebcamWindow(QMainWindow):
         self.home.resize(800, 600)
         self.home.show()
         self.close()
+    
     
 def main():
 
