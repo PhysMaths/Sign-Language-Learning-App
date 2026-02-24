@@ -28,7 +28,7 @@ mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
-hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.6)
+hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.8)
 
 model_dict = pickle.load(open('./1to10.p', 'rb'))
 model = model_dict['model']
@@ -70,11 +70,10 @@ class WebcamWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Webcam Preview")
-
+        
         self.closed = False
 
         self.numbers = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
-        self.index = 0
 
         self.progress = {}
         self.path = "progress.json"
@@ -172,7 +171,8 @@ class WebcamWindow(QMainWindow):
             self.sm2_update(1)
 
             self.current_number = self.next_number()
-
+            if self.current_number is None:
+                return
             self.question.setText(self.current_number)
 
         return
@@ -217,13 +217,17 @@ class WebcamWindow(QMainWindow):
 
                 self.question.setText(self.current_number)
 
+
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self.label.setPixmap(QPixmap.fromImage(image))
 
+    
+    def save_progress(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(self.progress, f, indent=2)
 
-    from datetime import datetime, timedelta
 
     def sm2_update(self, quality):
         ef = self.progress[self.current_number]["ease_factor"]
@@ -252,8 +256,10 @@ class WebcamWindow(QMainWindow):
         self.progress[self.current_number]["interval"] = interval
         self.progress[self.current_number]["due"] = (datetime.now() + timedelta(days=interval)).isoformat()
 
+        self.save_progress()
+
     def choose_difficulty(self):
-        msg = QMessageBox()
+        msg = QMessageBox(self)
         msg.setWindowTitle("Difficulty")
         msg.setText("Well Done! How hard was it to recall?:")
 
@@ -283,9 +289,6 @@ class WebcamWindow(QMainWindow):
 
 
     def closeEvent(self, event):
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self.progress, f, indent=2)
-
         if hasattr(self, "cap") and self.cap is not None:
             self.cap.release()
         super().closeEvent(event)
