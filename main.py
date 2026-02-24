@@ -111,8 +111,8 @@ class WebcamWindow(QMainWindow):
         self.label = QLabel("Starting camera…")
         self.label.setScaledContents(True)
 
-        self.capture_button = QPushButton("Take Picture")
-        self.capture_button.clicked.connect(self.analyse_picture)
+        self.answer_button = QPushButton("See Answer")
+        self.answer_button.clicked.connect(self.see_answer)
 
         self.result_label = QLabel("")
         self.result_label.setWordWrap(True)
@@ -122,7 +122,7 @@ class WebcamWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.addWidget(self.question)
         layout.addWidget(self.label, stretch=1)
-        layout.addWidget(self.capture_button)
+        layout.addWidget(self.answer_button)
         layout.addWidget(self.result_label)
 
         container = QWidget()
@@ -138,6 +138,19 @@ class WebcamWindow(QMainWindow):
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(30)
         self.latest_frame = None
+
+    def see_answer(self):
+        img_path = "pictures/" + self.numbers[self.index] + ".png"
+        if os.path.exists(img_path):
+            pixmap = QPixmap(img_path)
+            message = QMessageBox(self)
+            message.setText("")
+            if not pixmap.isNull():
+                message.setIconPixmap(
+                    pixmap.scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+            message.exec_()
+        return
 
     def update_frame(self):
         ok, frame = self.cap.read()
@@ -203,6 +216,24 @@ class WebcamWindow(QMainWindow):
         bytes_per_line = ch * w
         image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self.label.setPixmap(QPixmap.fromImage(image))
+
+    # def choose_difficulty():
+    #     msg = QMessageBox()
+    #     msg.setWindowTitle("How hard did you find it?")
+    #     msg.setText("Choose a number:")
+
+    #     buttons = {}
+    #     for i in range(1, 6):
+    #         button = msg.addButton(str(i), QMessageBox.ActionRole)
+    #         buttons[button] = i
+
+    #     msg.exec()
+
+    #     clicked_button = msg.clickedButton()
+
+    #     if clicked_button in buttons:
+    #         chosen_number = buttons[clicked_button]
+
 
     def analyse_picture(self):
         if self.latest_frame is None:
