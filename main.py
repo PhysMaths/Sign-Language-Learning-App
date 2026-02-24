@@ -1,7 +1,7 @@
 import sys
 import os
 import cv2
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import json
 from inference_sdk import InferenceConfiguration, InferenceHTTPClient
 from PyQt5.QtCore import QTimer
@@ -28,7 +28,7 @@ mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
-hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
+hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.6)
 
 model_dict = pickle.load(open('./1to10.p', 'rb'))
 model = model_dict['model']
@@ -79,11 +79,19 @@ class WebcamWindow(QMainWindow):
         self.progress = {}
         self.path = "progress.json"
 
-        if not os.path.exists(self.path):
-            today = date.today().isoformat()
+        # makes a new progress dictionary every time change for the final implementation
+        if not os.path.exists(self.path) or os.path.exists(self.path):
+            now = datetime.now().isoformat()
 
             self.progress = {
-                number : {"interval": 1, "next_due": today, "streak": 0}
+                number : {
+                    "repetitions" : 0,
+                    "interval" : 0,
+                    "ease_factor" : 2.5,
+                    "due" : now,
+                    "lapses": 0
+
+                }
                 for number in self.numbers
             }
 
@@ -114,16 +122,10 @@ class WebcamWindow(QMainWindow):
         self.answer_button = QPushButton("See Answer")
         self.answer_button.clicked.connect(self.see_answer)
 
-        self.result_label = QLabel("")
-        self.result_label.setWordWrap(True)
-        self.result_label.setAlignment(Qt.AlignCenter)
-        self.result_label.setFont(QFont("Arial", 24))
-
         layout = QVBoxLayout()
         layout.addWidget(self.question)
         layout.addWidget(self.label, stretch=1)
         layout.addWidget(self.answer_button)
-        layout.addWidget(self.result_label)
 
         container = QWidget()
         container.setLayout(layout)
@@ -150,6 +152,17 @@ class WebcamWindow(QMainWindow):
                     pixmap.scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 )
             message.exec_()
+
+            self.sm2_update(1)
+
+            while not self.is_valid(self.index):
+                self.index += 1
+                if self.index >= len(self.progress):
+                    self.go_home()  
+                    return   
+
+            self.question.setText(self.numbers[self.index])
+
         return
 
     def update_frame(self):
@@ -184,13 +197,9 @@ class WebcamWindow(QMainWindow):
             sign_prediction = labels_dict[int(prediction[0])]
 
             if sign_prediction == self.numbers[self.index]:
-                self.result_label.setText("Correct!")
-                self.progress[self.numbers[self.index]]["interval"] = min(self.progress[self.numbers[self.index]]["interval"] * 2, 30)
-                interval = self.progress[self.numbers[self.index]]["interval"]
-                next_due = self.progress[self.numbers[self.index]]["next_due"]
-                d = date.fromisoformat(next_due)
-                d += timedelta(days=interval)
-                self.progress[self.numbers[self.index]]["next_due"] = d.isoformat()
+                quality = self.choose_difficulty()
+
+                self.sm2_update(quality)
 
                 while not self.is_valid(self.index):
                     self.index += 1
@@ -201,7 +210,6 @@ class WebcamWindow(QMainWindow):
                 self.question.setText(self.numbers[self.index])
 
             
-
             # Display prediction on frame
             cv2.putText(frame,
                         f'Prediction: {sign_prediction}',
@@ -217,83 +225,68 @@ class WebcamWindow(QMainWindow):
         image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self.label.setPixmap(QPixmap.fromImage(image))
 
-    # def choose_difficulty():
-    #     msg = QMessageBox()
-    #     msg.setWindowTitle("How hard did you find it?")
-    #     msg.setText("Choose a number:")
 
-    #     buttons = {}
-    #     for i in range(1, 6):
-    #         button = msg.addButton(str(i), QMessageBox.ActionRole)
-    #         buttons[button] = i
+    from datetime import datetime, timedelta
 
-    #     msg.exec()
-
-    #     clicked_button = msg.clickedButton()
-
-    #     if clicked_button in buttons:
-    #         chosen_number = buttons[clicked_button]
-
-
-    def analyse_picture(self):
-        if self.latest_frame is None:
-            return
-        
-        self.result_label.setText("")
-        
-        data_aux = []
-
-        frame = self.latest_frame
-
-        frame_rgb = cv2.cvtColor(frame,  cv2.COLOR_BGR2RGB)
-         
-        results = hands.process(frame_rgb)
-        if results.multi_hand_landmarks and len(results.multi_hand_landmarks) == 1:
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(
-                    frame,  # image to draw
-                    hand_landmarks,  # model output
-                    mp_hands.HAND_CONNECTIONS,  # hand connections
-                    mp_drawing_styles.get_default_hand_landmarks_style(),
-                    mp_drawing_styles.get_default_hand_connections_style())
-                
-                for i in range(len(hand_landmarks.landmark)):
-                        x = hand_landmarks.landmark[i].x
-                        y = hand_landmarks.landmark[i].y
-                        data_aux.append(x)
-                        data_aux.append(y)
-
-        prediction = model.predict([np.asarray(data_aux)])
-
-        labels_dict = {0: '1', 1: '2', 2: '3', 3: '4', 4: '5', 5: '6', 6: '7', 7: '8', 8: '9', 9: '10'}
-
-        sign_prediction = str(labels_dict[int(prediction[0])])
-        
-        if sign_prediction == self.numbers[self.index]:
-            self.result_label.setText("Correct!")
-            self.progress[self.numbers[self.index]]["interval"] = min(self.progress[self.numbers[self.index]]["interval"] * 2, 30)
-        else:
-            print("got here to the wrong part")
-            self.result_label.setText("Wrong")
-            self.progress[self.numbers[self.index]]["interval"] = 1
-            # self.show_wrong_popup()
-        
+    def sm2_update(self, quality):
+        ef = self.progress[self.numbers[self.index]]["ease_factor"]
+        reps = self.progress[self.numbers[self.index]]["repetitions"]
         interval = self.progress[self.numbers[self.index]]["interval"]
-        next_due = self.progress[self.numbers[self.index]]["next_due"]
-        d = date.fromisoformat(next_due)
-        d += timedelta(days=interval)
-        self.progress[self.numbers[self.index]]["next_due"] = d.isoformat()
 
-        while not self.is_valid(self.index):
-            self.index += 1
-            if self.index >= len(self.progress):
-                self.go_home()  
-                return      
+        if quality < 3:
+            reps = 0
+            interval = 1
+            self.progress[self.numbers[self.index]]["lapses"] += 1
+        else:
+            reps += 1
 
-        self.question.setText(self.numbers[self.index])
+            if reps == 1:
+                interval = 1
+            elif reps == 2:
+                interval = 6
+            else:
+                interval = round(interval * ef)
+
+        ef = ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+        ef = max(1.3, ef)
+
+        self.progress[self.numbers[self.index]]["ease_factor"] = ef
+        self.progress[self.numbers[self.index]]["repetitions"] = reps
+        self.progress[self.numbers[self.index]]["interval"] = interval
+        self.progress[self.numbers[self.index]]["due"] = (datetime.now() + timedelta(days=interval)).isoformat()
+
+    def choose_difficulty(self):
+        msg = QMessageBox()
+        msg.setWindowTitle("Difficulty")
+        msg.setText("Well Done! How hard was it to recall?:")
+
+        buttons = {}
+
+        for quality in ['AGAIN', 'HARD', 'GOOD', 'EASY']:
+            button = msg.addButton(quality, QMessageBox.ActionRole)
+            buttons[button] = quality
+
+        msg.exec()
+
+        quality_to_number = {
+            'AGAIN' : 1,
+            'HARD' : 3,
+            'GOOD' : 4, 
+            'EASY' : 5
+        }
+
+        clicked_button = msg.clickedButton()
+
+        if clicked_button in buttons:
+            chosen_quality = buttons[clicked_button]
+            chosen_number = quality_to_number[chosen_quality]
+            return chosen_number
+
+        return 1
+
                 
     def is_valid(self, index):
-        if self.progress[self.numbers[index]]["next_due"] == date.today().isoformat():
+        if datetime.fromisoformat(self.progress[self.numbers[index]]["due"]) <= datetime.now():
             return True
         return False
 
