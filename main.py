@@ -30,7 +30,7 @@ mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 
-hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.8)
+hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.2)
 
 model_dict = pickle.load(open('./1to10.p', 'rb'))
 model = model_dict['model']
@@ -250,18 +250,25 @@ class WebcamWindow(QMainWindow):
                         data_aux.append(y)
                 
                 
-            prediction = model.predict([np.asarray(data_aux)])
+            probs = model.predict_proba([np.asarray(data_aux)])[0]
 
-            sign_prediction = labels_dict[int(prediction[0])]
+            best_idx = int(np.argmax(probs))
+            confidence = float(probs[best_idx])
 
-            if sign_prediction == self.current_number:
-                quality = self.choose_difficulty()
+            print(confidence)
 
-                self.sm2_update(quality)
+            if confidence >= 0.8:
 
-                self.current_number = self.next_number()   
+                sign_prediction = labels_dict[int(model.classes_[best_idx])]
 
-                self.question.setText(self.current_number)
+                if sign_prediction == self.current_number:
+                    quality = self.choose_difficulty()
+
+                    self.sm2_update(quality)
+
+                    self.current_number = self.next_number()   
+
+                    self.question.setText(self.current_number)
 
 
         h, w, ch = frame.shape
