@@ -473,8 +473,9 @@ class WebcamWindow(QMainWindow):
 
             print(confidence)
 
-            if confidence >= 0.8:
-                sign_prediction = labels_dict[int(model.classes_[best_idx])]
+            sign_prediction = labels_dict[int(model.classes_[best_idx])]
+
+            if confidence >= 0.8 or (sign_prediction == 4 and confidence >= 0.6):
                 if sign_prediction == self.current_number:
                     quality = self.choose_difficulty()
                     self.sm2_update(quality)
