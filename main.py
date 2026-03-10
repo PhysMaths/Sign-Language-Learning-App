@@ -34,7 +34,7 @@ hands = mp_hands.Hands(
     min_tracking_confidence=0.5,
 )
 
-model_dict = pickle.load(open("./1to10.p", "rb"))
+model_dict = pickle.load(open("./model.p", "rb"))
 model = model_dict["model"]
 
 labels_dict = {
@@ -359,6 +359,7 @@ class WebcamWindow(QMainWindow):
         self.label.setObjectName("cameraLabel")
         self.label.setAlignment(Qt.AlignCenter)
         self.label.setMinimumHeight(500)
+        self.label.setScaledContents(False)
 
         self.answer_button = QPushButton("See Answer")
         self.answer_button.setObjectName("secondaryButton")
@@ -451,6 +452,8 @@ class WebcamWindow(QMainWindow):
         self.latest_frame = frame
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         data_aux = []
+        x_ = []
+        y_ = []
 
         results = hands.process(frame)
         if results.multi_hand_landmarks and len(results.multi_hand_landmarks) == 1:
@@ -464,15 +467,16 @@ class WebcamWindow(QMainWindow):
                 )
 
                 for landmark in hand_landmarks.landmark:
-                    data_aux.append(landmark.x)
-                    data_aux.append(landmark.y)
+                    x_.append(landmark.x)
+                    y_.append(landmark.y)
+
+                for landmark in hand_landmarks.landmark:
+                    data_aux.append(landmark.x - min(x_))
+                    data_aux.append(landmark.y - min(y_))
 
             probs = model.predict_proba([np.asarray(data_aux)])[0]
             best_idx = int(np.argmax(probs))
             confidence = float(probs[best_idx])
-
-            print(confidence)
-
             sign_prediction = labels_dict[int(model.classes_[best_idx])]
 
             if confidence >= 0.8 or (sign_prediction == 4 and confidence >= 0.6):
@@ -488,7 +492,12 @@ class WebcamWindow(QMainWindow):
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        self.label.setPixmap(QPixmap.fromImage(image))
+        pixmap = QPixmap.fromImage(image).scaled(
+            self.label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.label.setPixmap(pixmap)
 
     def log_review(self, number, quality, before, after, correct=True):
         event = {
