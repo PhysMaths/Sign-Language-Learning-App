@@ -34,7 +34,7 @@ hands = mp_hands.Hands(
     min_tracking_confidence=0.5,
 )
 
-model_dict = pickle.load(open("./model.p", "rb"))
+model_dict = pickle.load(open("./modelextended.p", "rb"))
 model = model_dict["model"]
 
 labels_dict = {
@@ -48,6 +48,11 @@ labels_dict = {
     7: "8",
     8: "9",
     9: "10",
+    10: "A",
+    11: "B",
+    12: "C",
+    13: "D",
+    14: "E"
 }
 
 APP_STYLE = """
@@ -294,7 +299,7 @@ class WebcamWindow(QMainWindow):
         self.resize(1040, 780)
 
         self.closed = False
-        self.numbers = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+        self.numbers = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "A", "B", "C", "D", "E"]
         self.progress = {}
         self.path = "progress.json"
         self.due_queue = []
