@@ -34,7 +34,7 @@ hands = mp_hands.Hands(
     min_tracking_confidence=0.5,
 )
 
-model_dict = pickle.load(open("./modelextended.p", "rb"))
+model_dict = pickle.load(open("./modelextended2.p", "rb"))
 model = model_dict["model"]
 
 labels_dict = {
