@@ -9,11 +9,12 @@ from datetime import datetime, timedelta
 import cv2
 import mediapipe as mp
 import numpy as np
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QImage, QPixmap
+from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -36,12 +37,13 @@ hands = mp_hands.Hands(
 
 model_dict = pickle.load(open("./modelextended2.p", "rb"))
 model = model_dict["model"]
+WINDOW_REGISTRY = []
 
 labels_dict = {
     0: "1",
     1: "2",
     2: "3",
-    3: "4",
+    3: "4", 
     4: "5",
     5: "6",
     6: "7",
@@ -111,6 +113,49 @@ QLabel#statCard {
     padding: 16px;
     font-size: 15px;
 }
+QFrame#metricCard {
+    background: rgba(255, 251, 245, 0.96);
+    border: 1px solid rgba(52, 77, 61, 0.10);
+    border-radius: 22px;
+}
+QLabel#metricValue {
+    color: #173324;
+    font-size: 29px;
+    font-weight: 700;
+}
+QLabel#metricLabel {
+    color: #617261;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+QLabel#metricDetail {
+    color: #516053;
+    font-size: 14px;
+}
+QFrame#chartCard {
+    background: rgba(255, 255, 255, 0.93);
+    border: 1px solid rgba(50, 73, 59, 0.12);
+    border-radius: 24px;
+}
+QLabel#chartTitle {
+    color: #213427;
+    font-size: 20px;
+    font-weight: 700;
+}
+QLabel#chartSubtitle {
+    color: #5d6b60;
+    font-size: 14px;
+}
+QLabel#insightPill {
+    background: #eef5ee;
+    color: #2f5a40;
+    border-radius: 14px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 600;
+}
 QPushButton {
     min-height: 52px;
     border-radius: 16px;
@@ -161,6 +206,382 @@ def build_panel():
 
 def apply_app_style(app):
     app.setStyleSheet(APP_STYLE)
+
+
+def keep_window_reference(window):
+    WINDOW_REGISTRY.append(window)
+    return window
+
+
+def load_review_events(path="reviews.jsonl"):
+    events = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        return []
+    return events
+
+
+def compute_analytics_summary(path="reviews.jsonl"):
+    total = 0
+    correct = 0
+    quality_counts = Counter()
+    reviews_per_day = defaultdict(int)
+    card_totals = Counter()
+
+    for ev in load_review_events(path):
+        total += 1
+        if ev.get("correct"):
+            correct += 1
+        quality = int(ev.get("quality", 0))
+        quality_counts[quality] += 1
+        timestamp = ev.get("ts", "")
+        if len(timestamp) >= 10:
+            reviews_per_day[timestamp[:10]] += 1
+        card_id = ev.get("card_id")
+        if card_id:
+            card_totals[card_id] += 1
+
+    accuracy = (correct / total * 100) if total else 0.0
+    ordered_days = dict(sorted(reviews_per_day.items()))
+    streak_days = 0
+    if ordered_days:
+        active_days = {
+            datetime.fromisoformat(day).date() for day in ordered_days.keys()
+        }
+        cursor = max(active_days)
+        while cursor in active_days:
+            streak_days += 1
+            cursor -= timedelta(days=1)
+
+    best_day = None
+    if ordered_days:
+        best_day = max(ordered_days.items(), key=lambda item: item[1])
+
+    return {
+        "total_reviews": total,
+        "accuracy_pct": round(accuracy, 1),
+        "quality_counts": dict(quality_counts),
+        "reviews_per_day": ordered_days,
+        "card_totals": dict(card_totals),
+        "streak_days": streak_days,
+        "best_day": best_day,
+    }
+
+
+class MetricCard(QFrame):
+    def __init__(self, value, label, detail, parent=None):
+        super().__init__(parent)
+        self.setObjectName("metricCard")
+
+        value_label = QLabel(value)
+        value_label.setObjectName("metricValue")
+
+        label_widget = QLabel(label)
+        label_widget.setObjectName("metricLabel")
+
+        detail_label = QLabel(detail)
+        detail_label.setObjectName("metricDetail")
+        detail_label.setWordWrap(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(8)
+        layout.addWidget(label_widget)
+        layout.addWidget(value_label)
+        layout.addWidget(detail_label)
+        layout.addStretch()
+        self.setLayout(layout)
+
+
+class QualityBarChart(QWidget):
+    def __init__(self, quality_counts, parent=None):
+        super().__init__(parent)
+        self.quality_counts = quality_counts
+        self.labels = [
+            ("Again", 1, QColor("#d96c5f")),
+            ("Hard", 3, QColor("#d9a441")),
+            ("Good", 4, QColor("#4f8a5b")),
+            ("Easy", 5, QColor("#2c5f46")),
+        ]
+        self.setMinimumHeight(170)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#fffaf4"))
+
+        chart_rect = self.rect().adjusted(28, 18, -28, -40)
+        track_rect = chart_rect.adjusted(0, 8, 0, -24)
+        max_value = max([self.quality_counts.get(key, 0) for _, key, _ in self.labels] + [1])
+        bar_space = chart_rect.width() / max(len(self.labels), 1)
+
+        painter.setPen(QPen(QColor("#d9d3c8"), 1))
+        painter.drawLine(track_rect.bottomLeft(), track_rect.bottomRight())
+
+        for index, (label, key, color) in enumerate(self.labels):
+            value = self.quality_counts.get(key, 0)
+            bar_width = min(42, bar_space * 0.58)
+            x = chart_rect.left() + index * bar_space + (bar_space - bar_width) / 2
+            full_bar_rect = QRectF(x, track_rect.top(), bar_width, track_rect.height())
+            fill_height = 0 if max_value == 0 else (value / max_value) * track_rect.height()
+            fill_rect = QRectF(x, track_rect.bottom() - fill_height, bar_width, fill_height)
+            radius = min(10.0, bar_width / 2, max(fill_rect.height() / 2, 0.0))
+
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#ebe4d9"))
+            painter.drawRoundedRect(full_bar_rect, 10, 10)
+
+            if fill_rect.height() > 0:
+                painter.setBrush(color)
+                painter.drawRoundedRect(fill_rect, radius, radius)
+
+            painter.setPen(QColor("#2c392f"))
+            painter.setFont(QFont("Avenir Next", 10, QFont.DemiBold))
+            painter.drawText(QRectF(x - 12, chart_rect.bottom() + 6, bar_width + 24, 16), Qt.AlignCenter, label)
+            painter.drawText(QRectF(x - 12, track_rect.top() - 20, bar_width + 24, 18), Qt.AlignCenter, str(value))
+
+        painter.end()
+
+
+class ActivityLineChart(QWidget):
+    def __init__(self, reviews_per_day, parent=None):
+        super().__init__(parent)
+        self.reviews_per_day = reviews_per_day
+        self.setMinimumHeight(170)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#fffaf4"))
+
+        chart_rect = self.rect().adjusted(32, 20, -20, -34)
+        values = list(self.reviews_per_day.values())[-7:]
+        labels = list(self.reviews_per_day.keys())[-7:]
+
+        painter.setPen(QPen(QColor("#ddd4c7"), 1))
+        for step in range(4):
+            y = chart_rect.top() + step * chart_rect.height() / 3
+            painter.drawLine(chart_rect.left(), int(y), chart_rect.right(), int(y))
+
+        if not values:
+            painter.setPen(QColor("#6a756b"))
+            painter.setFont(QFont("Avenir Next", 12))
+            painter.drawText(self.rect(), Qt.AlignCenter, "Complete a few review sessions to populate this chart.")
+            painter.end()
+            return
+
+        max_value = max(values + [1])
+        if len(values) == 1:
+            points = [QPointF(chart_rect.center().x(), chart_rect.bottom() - (values[0] / max_value) * chart_rect.height())]
+        else:
+            points = []
+            step_x = chart_rect.width() / (len(values) - 1)
+            for index, value in enumerate(values):
+                x = chart_rect.left() + index * step_x
+                y = chart_rect.bottom() - (value / max_value) * (chart_rect.height() - 10)
+                points.append(QPointF(x, y))
+
+        path = QPainterPath()
+        path.moveTo(points[0])
+        for point in points[1:]:
+            path.lineTo(point)
+
+        fill_path = QPainterPath(path)
+        fill_path.lineTo(chart_rect.bottomRight())
+        fill_path.lineTo(chart_rect.bottomLeft())
+        fill_path.closeSubpath()
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(122, 163, 127, 55))
+        painter.drawPath(fill_path)
+
+        painter.setPen(QPen(QColor("#3d6d4d"), 3))
+        painter.drawPath(path)
+
+        painter.setBrush(QColor("#244e35"))
+        for point, value in zip(points, values):
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(point, 4, 4)
+            painter.setPen(QColor("#2b372e"))
+            painter.setFont(QFont("Avenir Next", 10, QFont.DemiBold))
+            painter.drawText(QRectF(point.x() - 14, point.y() - 24, 28, 16), Qt.AlignCenter, str(value))
+
+        painter.setPen(QColor("#59665b"))
+        painter.setFont(QFont("Avenir Next", 9))
+        for point, label in zip(points, labels):
+            painter.drawText(QRectF(point.x() - 24, chart_rect.bottom() + 8, 48, 14), Qt.AlignCenter, label[5:])
+
+        painter.end()
+
+
+class AnalyticsWindow(QMainWindow):
+    def __init__(self, home_window=None, analytics_path="reviews.jsonl"):
+        super().__init__()
+        self.home_window = home_window
+        self.analytics_path = analytics_path
+        self.setWindowTitle("Practice Analytics")
+        self.resize(1080, 760)
+
+        analytics = compute_analytics_summary(self.analytics_path)
+
+        header_label = QLabel("Analytics")
+        header_label.setObjectName("heroTitle")
+
+        subtitle = QLabel(
+            "A clearer read on your recall quality, session rhythm, and which signs are taking the most reps."
+        )
+        subtitle.setObjectName("heroSubtitle")
+        subtitle.setWordWrap(True)
+
+        back_button = QPushButton("Back Home")
+        back_button.setObjectName("secondaryButton")
+        back_button.setCursor(Qt.PointingHandCursor)
+        back_button.clicked.connect(self.go_home)
+
+        refresh_button = QPushButton("Refresh")
+        refresh_button.setObjectName("primaryButton")
+        refresh_button.setCursor(Qt.PointingHandCursor)
+        refresh_button.clicked.connect(self.refresh_page)
+
+        header_buttons = QHBoxLayout()
+        header_buttons.setSpacing(12)
+        header_buttons.addWidget(back_button)
+        header_buttons.addWidget(refresh_button)
+
+        top_practiced = sorted(
+            analytics["card_totals"].items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:3]
+        top_practiced_text = " • ".join(
+            f"{card}: {count}" for card, count in top_practiced
+        ) or "No review history yet"
+
+        metrics_grid = QGridLayout()
+        metrics_grid.setHorizontalSpacing(14)
+        metrics_grid.setVerticalSpacing(14)
+        metrics_grid.addWidget(
+            MetricCard(
+                str(analytics["total_reviews"]),
+                "Total Reviews",
+                "Every scored recall event captured across sessions.",
+            ),
+            0,
+            0,
+        )
+        metrics_grid.addWidget(
+            MetricCard(
+                f"{analytics['accuracy_pct']}%",
+                "Accuracy",
+                "Share of reviews marked correct after recognition or answer reveal.",
+            ),
+            0,
+            1,
+        )
+        metrics_grid.addWidget(
+            MetricCard(
+                str(analytics["streak_days"]),
+                "Active Streak",
+                "Consecutive active review days based on your log history.",
+            ),
+            0,
+            2,
+        )
+        metrics_grid.addWidget(
+            MetricCard(
+                top_practiced[0][0] if top_practiced else "--",
+                "Most Practiced",
+                top_practiced_text,
+            ),
+            0,
+            3,
+        )
+
+        quality_chart = self.build_chart_card(
+            "Recall Quality",
+            "How each review was rated.",
+            QualityBarChart(analytics["quality_counts"]),
+        )
+        activity_chart = self.build_chart_card(
+            "Recent Activity",
+            "Daily review volume over your latest sessions.",
+            ActivityLineChart(analytics["reviews_per_day"]),
+        )
+
+        dashboard_row = QHBoxLayout()
+        dashboard_row.setSpacing(14)
+        dashboard_row.addWidget(quality_chart, 1)
+        dashboard_row.addWidget(activity_chart, 1)
+
+        hero_layout = QHBoxLayout()
+        hero_layout.setSpacing(16)
+        hero_text = QVBoxLayout()
+        hero_text.setSpacing(8)
+        hero_text.addWidget(header_label)
+        hero_text.addWidget(subtitle)
+        hero_text.addStretch()
+        hero_layout.addLayout(hero_text, 1)
+        hero_layout.addLayout(header_buttons)
+
+        panel_layout = QVBoxLayout()
+        panel_layout.setContentsMargins(24, 22, 24, 22)
+        panel_layout.setSpacing(14)
+        panel_layout.addLayout(hero_layout)
+        panel_layout.addLayout(metrics_grid)
+        panel_layout.addLayout(dashboard_row, 1)
+
+        panel = build_panel()
+        panel.setLayout(panel_layout)
+
+        page_layout = QVBoxLayout()
+        page_layout.setContentsMargins(22, 18, 22, 18)
+        page_layout.addWidget(panel)
+
+        container = build_root_widget()
+        container.setLayout(page_layout)
+        self.setCentralWidget(container)
+
+    def build_chart_card(self, title, subtitle, chart_widget):
+        title_label = QLabel(title)
+        title_label.setObjectName("chartTitle")
+
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setObjectName("chartSubtitle")
+        subtitle_label.setWordWrap(True)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+        layout.addWidget(title_label)
+        layout.addWidget(subtitle_label)
+        layout.addWidget(chart_widget, 1)
+
+        card = QFrame()
+        card.setObjectName("chartCard")
+        card.setLayout(layout)
+        return card
+
+    def refresh_page(self):
+        refreshed = keep_window_reference(
+            AnalyticsWindow(self.home_window, self.analytics_path)
+        )
+        refreshed.resize(self.size())
+        refreshed.show()
+        self.close()
+
+    def go_home(self):
+        if self.home_window is None:
+            self.home_window = keep_window_reference(HomeWindow())
+            self.home_window.resize(900, 640)
+        self.home_window.show()
+        self.close()
 
 
 class HomeWindow(QMainWindow):
@@ -229,67 +650,26 @@ class HomeWindow(QMainWindow):
         self.webcam_window = None
 
     def start_session(self):
-        self.webcam_window = WebcamWindow()
+        self.webcam_window = keep_window_reference(WebcamWindow())
         self.webcam_window.resize(980, 720)
         if not self.webcam_window.closed:
             self.webcam_window.show()
         self.close()
 
     def compute_analytics(self, path="reviews.jsonl"):
-        total = 0
-        correct = 0
-        quality_counts = Counter()
-        reviews_per_day = defaultdict(int)
-
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    ev = json.loads(line)
-                    total += 1
-                    if ev.get("correct"):
-                        correct += 1
-                    q = int(ev.get("quality", 0))
-                    quality_counts[q] += 1
-                    day = ev["ts"][:10]
-                    reviews_per_day[day] += 1
-        except FileNotFoundError:
-            pass
-
-        accuracy = (correct / total * 100) if total else 0.0
-
+        analytics = compute_analytics_summary(path)
         return {
-            "total_reviews": total,
-            "accuracy_pct": round(accuracy, 1),
-            "quality_counts": dict(quality_counts),
-            "reviews_per_day": dict(sorted(reviews_per_day.items())),
+            "total_reviews": analytics["total_reviews"],
+            "accuracy_pct": analytics["accuracy_pct"],
+            "quality_counts": analytics["quality_counts"],
+            "reviews_per_day": analytics["reviews_per_day"],
         }
 
     def show_analytics(self):
-        analytics = self.compute_analytics()
-        quality_labels = {1: "Again", 3: "Hard", 4: "Good", 5: "Easy"}
-        quality_lines = []
-        for key in [1, 3, 4, 5]:
-            quality_lines.append(
-                f"{quality_labels[key]}: {analytics['quality_counts'].get(key, 0)}"
-            )
-
-        busiest_day = "No activity yet"
-        if analytics["reviews_per_day"]:
-            day, count = max(
-                analytics["reviews_per_day"].items(),
-                key=lambda item: item[1],
-            )
-            busiest_day = f"{day} ({count} reviews)"
-
-        text = (
-            f"Total reviews: {analytics['total_reviews']}\n"
-            f"Accuracy: {analytics['accuracy_pct']}%\n"
-            f"Busiest day: {busiest_day}\n\n"
-            f"{chr(10).join(quality_lines)}"
-        )
-        QMessageBox.information(self, "Analytics", text)
+        self.analytics_window = keep_window_reference(AnalyticsWindow(self))
+        self.analytics_window.resize(1080, 760)
+        self.analytics_window.show()
+        self.hide()
 
 
 class WebcamWindow(QMainWindow):
@@ -600,7 +980,7 @@ class WebcamWindow(QMainWindow):
 
     def go_home(self):
         QMessageBox.information(self, "All done", "All cards for today are finished.")
-        self.home = HomeWindow()
+        self.home = keep_window_reference(HomeWindow())
         self.home.resize(900, 640)
         self.home.show()
         self.close()
