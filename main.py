@@ -13,6 +13,7 @@ from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -139,6 +140,11 @@ QFrame#chartCard {
     border: 1px solid rgba(50, 73, 59, 0.12);
     border-radius: 24px;
 }
+QFrame#dialogCard {
+    background: rgba(255, 252, 246, 0.98);
+    border: 1px solid rgba(52, 77, 61, 0.14);
+    border-radius: 28px;
+}
 QLabel#chartTitle {
     color: #213427;
     font-size: 20px;
@@ -155,6 +161,28 @@ QLabel#insightPill {
     padding: 8px 12px;
     font-size: 13px;
     font-weight: 600;
+}
+QLabel#dialogEyebrow {
+    color: #617261;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+QLabel#dialogTitle {
+    color: #1c2e22;
+    font-size: 28px;
+    font-weight: 700;
+}
+QLabel#dialogBody {
+    color: #56665a;
+    font-size: 15px;
+}
+QLabel#answerPreview {
+    background: #f3ecdf;
+    border: 1px solid #ddd3c3;
+    border-radius: 22px;
+    padding: 20px;
 }
 QPushButton {
     min-height: 52px;
@@ -178,6 +206,38 @@ QPushButton#secondaryButton {
 }
 QPushButton#secondaryButton:hover {
     background: rgba(46, 91, 64, 0.08);
+}
+QPushButton#difficultyAgain {
+    background: #f3d8d3;
+    color: #7f3128;
+    border: none;
+}
+QPushButton#difficultyAgain:hover {
+    background: #ecc6bf;
+}
+QPushButton#difficultyHard {
+    background: #f3e1bd;
+    color: #775617;
+    border: none;
+}
+QPushButton#difficultyHard:hover {
+    background: #ead39f;
+}
+QPushButton#difficultyGood {
+    background: #dcebdc;
+    color: #255334;
+    border: none;
+}
+QPushButton#difficultyGood:hover {
+    background: #cce0cc;
+}
+QPushButton#difficultyEasy {
+    background: #cedfcf;
+    color: #1f4630;
+    border: none;
+}
+QPushButton#difficultyEasy:hover {
+    background: #bdd3bf;
 }
 QMessageBox {
     background: #f7f2e8;
@@ -299,6 +359,112 @@ class MetricCard(QFrame):
         layout.addWidget(detail_label)
         layout.addStretch()
         self.setLayout(layout)
+
+
+class AppDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setModal(True)
+        self.resize(520, 540)
+
+        self.panel = QFrame()
+        self.panel.setObjectName("dialogCard")
+
+        self.panel_layout = QVBoxLayout()
+        self.panel_layout.setContentsMargins(28, 28, 28, 28)
+        self.panel_layout.setSpacing(14)
+        self.panel.setLayout(self.panel_layout)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.addWidget(self.panel)
+        self.setLayout(layout)
+
+    def add_header(self, eyebrow, title, body):
+        eyebrow_label = QLabel(eyebrow)
+        eyebrow_label.setObjectName("dialogEyebrow")
+
+        title_label = QLabel(title)
+        title_label.setObjectName("dialogTitle")
+        title_label.setWordWrap(True)
+
+        body_label = QLabel(body)
+        body_label.setObjectName("dialogBody")
+        body_label.setWordWrap(True)
+
+        self.panel_layout.addWidget(eyebrow_label)
+        self.panel_layout.addWidget(title_label)
+        self.panel_layout.addWidget(body_label)
+
+
+class AnswerDialog(AppDialog):
+    def __init__(self, card_label, pixmap, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Answer")
+        self.resize(520, 620)
+        self.add_header(
+            "Answer",
+            f"Here is the sign for {card_label}",
+            "Use it as a quick reset, then rate the card again next time it shows up.",
+        )
+
+        preview = QLabel()
+        preview.setObjectName("answerPreview")
+        preview.setAlignment(Qt.AlignCenter)
+        if pixmap is not None and not pixmap.isNull():
+            preview.setPixmap(
+                pixmap.scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        else:
+            preview.setText("Preview unavailable")
+        self.panel_layout.addWidget(preview, 1)
+
+        button = QPushButton("Continue")
+        button.setObjectName("primaryButton")
+        button.setCursor(Qt.PointingHandCursor)
+        button.clicked.connect(self.accept)
+        self.panel_layout.addWidget(button)
+
+
+class DifficultyDialog(AppDialog):
+    def __init__(self, card_label, parent=None):
+        super().__init__(parent)
+        self.selected_quality = None
+        self.setWindowTitle("Difficulty")
+        self.resize(560, 430)
+        self.add_header(
+            "Recall Check",
+            f"How hard was {card_label} to recall?",
+            "Pick the rating that best matches how quickly and confidently the sign came back to you.",
+        )
+
+        buttons = [
+            ("Again", 1, "difficultyAgain"),
+            ("Hard", 3, "difficultyHard"),
+            ("Good", 4, "difficultyGood"),
+            ("Easy", 5, "difficultyEasy"),
+        ]
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
+
+        for index, (label, quality, object_name) in enumerate(buttons):
+            button = QPushButton(label)
+            button.setObjectName(object_name)
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(
+                lambda checked=False, chosen_quality=quality: self.select_quality(chosen_quality)
+            )
+            row = index // 2
+            column = index % 2
+            grid.addWidget(button, row, column)
+
+        self.panel_layout.addLayout(grid)
+
+    def select_quality(self, quality):
+        self.selected_quality = quality
+        self.accept()
 
 
 class QualityBarChart(QWidget):
@@ -813,14 +979,8 @@ class WebcamWindow(QMainWindow):
         img_path = "pictures/" + self.current_number + ".png"
         if os.path.exists(img_path):
             pixmap = QPixmap(img_path)
-            message = QMessageBox(self)
-            message.setWindowTitle("Answer")
-            message.setText("")
-            if not pixmap.isNull():
-                message.setIconPixmap(
-                    pixmap.scaled(320, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
-            message.exec_()
+            dialog = AnswerDialog(self.current_number, pixmap, self)
+            dialog.exec_()
 
             self.sm2_update(1)
             self.current_number = self.next_number()
@@ -864,7 +1024,7 @@ class WebcamWindow(QMainWindow):
             confidence = float(probs[best_idx])
             sign_prediction = labels_dict[int(model.classes_[best_idx])]
 
-            if confidence >= 0.8 or (sign_prediction == 4 and confidence >= 0.6):
+            if confidence >= 0.8:
                 if sign_prediction == self.current_number:
                     quality = self.choose_difficulty()
                     self.sm2_update(quality)
@@ -947,30 +1107,10 @@ class WebcamWindow(QMainWindow):
         self.save_progress()
 
     def choose_difficulty(self):
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Difficulty")
-        msg.setText("Well done. How hard was it to recall?")
-
-        buttons = {}
-        labels = ["AGAIN", "HARD", "GOOD", "EASY"]
-        for quality in labels:
-            button = msg.addButton(quality, QMessageBox.ActionRole)
-            buttons[button] = quality
-
-        msg.exec()
-
-        quality_to_number = {
-            "AGAIN": 1,
-            "HARD": 3,
-            "GOOD": 4,
-            "EASY": 5,
-        }
-
-        clicked_button = msg.clickedButton()
-        if clicked_button in buttons:
-            chosen_quality = buttons[clicked_button]
-            return quality_to_number[chosen_quality]
-
+        dialog = DifficultyDialog(self.current_number, self)
+        dialog.exec_()
+        if dialog.selected_quality is not None:
+            return dialog.selected_quality
         return 1
 
     def closeEvent(self, event):
